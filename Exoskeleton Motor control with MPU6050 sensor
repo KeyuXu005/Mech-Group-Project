@@ -1,0 +1,157 @@
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+#include <math.h>
+
+//include Adafruit_library for MPU6050
+Adafruit_MPU6050 mpu;
+
+/////////////////////////////////
+#define ENCA 2 //Yellow
+#define ENCB 3 //White
+#define PWM 9
+#define IN2 7
+#define IN1 8
+
+volatile int posi = 0;
+long T_pre = 0;
+float Error_pre = 0;
+float integral = 0;
+int count = 0;
+///////////////////////////////
+
+
+
+//initialisation
+void setup(void) {
+  Serial.begin(38400);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  //filter signal frequency
+  //delay(100);
+
+  //////////////////////////////////////
+  pinMode(ENCA,INPUT);
+  pinMode(ENCB,INPUT);
+  attachInterrupt(digitalPinToInterrupt(ENCA),readEncoder,RISING);
+  
+  pinMode(PWM,OUTPUT);
+  pinMode(IN1,OUTPUT);
+  pinMode(IN2,OUTPUT);
+  /////////////////////////////////////
+}
+void loop() {
+
+  //////////////////////////////////////////////////////////////////////////////////////////
+  int degree_target;
+  int degree_pos;
+  int target;
+  
+  //stablise the motor before starting the experiment
+  if (count < 500){
+    target = 0;
+  }
+  else if (500 <= count && count < 2040){
+    target = 350*sin(T_pre/0.2e6);//311
+  }
+  else target = 0;
+
+
+
+  // PID parameters
+  float kp = 0.6;
+  float kd = 0.15;
+  float ki = 0.02;
+
+  // time difference
+  long currT = micros();
+  float T_delta = ((float) (currT - T_pre))/( 1.0e6 );
+  T_pre = currT;
+
+  // Read the position
+  int pos = 0; 
+  pos = posi;
+  interrupts(); // enable the interrupts while encoder sees a change in pulses
+  
+  // PID control error
+  int error = target - pos;
+
+  // derivative
+  float dt = (error-Error_pre)/(T_delta);
+
+  // integral
+  integral = integral + error*T_delta;
+
+  // PID calculation results input into PWM
+  float PID = kp*error + kd*dt + ki*integral;
+
+  // limit PWM signal to 255
+  float pwr = fabs(PID);
+  if( pwr > 255 ){
+    pwr = 255;
+  }
+
+  // determine direction
+  int dir = 1;
+  if(PID<0){
+    dir = -1;
+  }
+
+  // signal the motor
+  setMotor(dir,pwr,PWM,IN1,IN2);
+
+
+  // store previous error
+  Error_pre = error;
+
+  degree_target = target*0.32;
+  Serial.print(degree_target);
+  Serial.print("\t");
+  
+  degree_pos = pos*0.32;
+  Serial.print(degree_pos);
+  Serial.println("\t");
+  //Serial.print(PID);
+  //Serial.println(" ");
+
+  count++;
+  //Serial.print(count);
+  //Serial.println(" ");
+  ///////////////////////////////////////////////////////////////////////////
+
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+  //get y-axis rotation from x and z axis acceleration and convert it to degrees
+  float y = atan2(a.acceleration.x, a.acceleration.z) /3.1415926 *180;
+  Serial.print(y);
+  Serial.println(" ");
+
+  //delay(100);
+
+}
+
+///////////////////////////////////////////////////////////////////
+void setMotor(int dir, int pwmVal, int pwm, int in1, int in2){
+  analogWrite(pwm,pwmVal);
+  if(dir == 1){
+    digitalWrite(in1,HIGH);
+    digitalWrite(in2,LOW);
+  }
+  else if(dir == -1){
+    digitalWrite(in1,LOW);
+    digitalWrite(in2,HIGH);
+  }
+  else{
+    digitalWrite(in1,LOW);
+    digitalWrite(in2,LOW);
+  }  
+}
+
+void readEncoder(){
+  int b = digitalRead(ENCB);
+  if(b > 0){
+    posi++;
+  }
+  else{
+    posi--;
+  }
+}
